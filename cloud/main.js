@@ -49,3 +49,49 @@ Parse.Cloud.afterDelete('Post', async (request) => {
 
   await Parse.Object.destroyAll(comments, { useMasterKey: true });
 });
+
+// ---------- Comment ----------
+
+Parse.Cloud.beforeSave('Comment', async (request) => {
+  const comment = request.object;
+
+  checkLength(comment.get('text'), 1, 500, 'text');
+
+  const post = comment.get('post');
+  if (!post || !post.id) {
+    throw validationError('post is required');
+  }
+
+  try {
+    await new Parse.Query('Post').get(post.id, { useMasterKey: true });
+  } catch (e) {
+    throw new Parse.Error(Parse.Error.OBJECT_NOT_FOUND, 'Post not found');
+  }
+
+  if (comment.isNew() && request.user) {
+    comment.set('author', request.user);
+    comment.setACL(ownerACL(request.user));
+  }
+});
+
+async function updateCommentsCount(comment, amount) {
+  const post = comment.get('post');
+  if (!post) return;
+  try {
+    post.increment('commentsCount', amount);
+    await post.save(null, { useMasterKey: true });
+  } catch (e) {
+    // the post may already be deleted
+    console.warn('Could not update commentsCount:', e.message);
+  }
+}
+
+Parse.Cloud.afterSave('Comment', async (request) => {
+  if (!request.original) {
+    await updateCommentsCount(request.object, 1);
+  }
+});
+
+Parse.Cloud.afterDelete('Comment', async (request) => {
+  await updateCommentsCount(request.object, -1);
+});
