@@ -95,3 +95,49 @@ Parse.Cloud.afterSave('Comment', async (request) => {
 Parse.Cloud.afterDelete('Comment', async (request) => {
   await updateCommentsCount(request.object, -1);
 });
+
+// ---------- Like ----------
+
+Parse.Cloud.define(
+  'toggleLike',
+  async (request) => {
+    const { postId } = request.params;
+    if (typeof postId !== 'string' || postId.length === 0) {
+      throw validationError('postId is required');
+    }
+
+    let post;
+    try {
+      post = await new Parse.Query('Post').get(postId, { useMasterKey: true });
+    } catch (e) {
+      throw new Parse.Error(Parse.Error.OBJECT_NOT_FOUND, 'Post not found');
+    }
+
+    const existing = await new Parse.Query('Like')
+      .equalTo('post', post)
+      .equalTo('user', request.user)
+      .first({ useMasterKey: true });
+
+    let liked;
+    if (existing) {
+      await existing.destroy({ useMasterKey: true });
+      post.increment('likesCount', -1);
+      liked = false;
+    } else {
+      const like = new Parse.Object('Like');
+      like.set('post', post);
+      like.set('user', request.user);
+      const acl = new Parse.ACL();
+      acl.setPublicReadAccess(true);
+      like.setACL(acl);
+      await like.save(null, { useMasterKey: true });
+      post.increment('likesCount', 1);
+      liked = true;
+    }
+
+    await post.save(null, { useMasterKey: true });
+
+    return { liked, likesCount: post.get('likesCount') };
+  },
+  { requireUser: true }
+);
